@@ -1,6 +1,5 @@
 use std::{io, usize};
 
-use unicode_width::UnicodeWidthStr;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -10,15 +9,17 @@ use crossterm::{
 };
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
+use unicode_width::UnicodeWidthStr;
 
 enum Mode {
     Normal,
     Insert,
+    Popup,
 }
 
 struct App {
@@ -34,6 +35,9 @@ impl App {
     }
     fn enter_normal_mode(&mut self) {
         self.mode = Mode::Normal;
+    }
+    fn enter_popup_mode(&mut self) {
+        self.mode = Mode::Popup;
     }
     fn select_next(&mut self) {
         match self.selected_list_index {
@@ -98,7 +102,6 @@ fn main() -> Result<(), io::Error> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
     let mut app = App::default();
 
     loop {
@@ -150,6 +153,21 @@ fn main() -> Result<(), io::Error> {
                     (KeyCode::Char('d'), KeyModifiers::NONE) => {
                         app.delete_selected_item();
                     }
+                    (KeyCode::Char('?'), KeyModifiers::NONE) => {
+                        app.enter_popup_mode();
+                    }
+                    _ => {}
+                },
+                Mode::Popup => match (code, modifiers) {
+                    (KeyCode::Esc, KeyModifiers::NONE) => {
+                        app.enter_normal_mode();
+                    }
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        app.enter_normal_mode();
+                    }
+                    (KeyCode::Char('?'), KeyModifiers::NONE) => {
+                        app.enter_normal_mode();
+                    }
                     _ => {}
                 },
             }
@@ -173,8 +191,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
 
     let input = Paragraph::new(app.input.as_ref())
         .style(match app.mode {
-            Mode::Normal => Style::default(),
             Mode::Insert => Style::default().fg(Color::Yellow),
+            _ => Style::default(),
         })
         .block(Block::default().borders(Borders::ALL).title("Input"));
     f.render_widget(input, chunks[0]);
@@ -190,8 +208,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let list = List::new(items2)
         .block(Block::default().title("List").borders(Borders::ALL))
         .style(match app.mode {
-            Mode::Insert => Style::default(),
             Mode::Normal => Style::default().fg(Color::Yellow),
+            _ => Style::default(),
         })
         .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
         .highlight_symbol(">>");
@@ -201,6 +219,49 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
 
     match app.mode {
         Mode::Normal => {}
-        Mode::Insert => f.set_cursor(chunks[0].x +  app.input.width_cjk() as u16 + 1, chunks[0].y + 1),
+        Mode::Insert => f.set_cursor(
+            chunks[0].x + app.input.width_cjk() as u16 + 1,
+            chunks[0].y + 1,
+        ),
+        Mode::Popup => {
+            let block =
+                Block::default()
+                    .title("Popup")
+                    .borders(Borders::ALL)
+                    .style(match app.mode {
+                        Mode::Popup => Style::default().fg(Color::Yellow),
+                        _ => Style::default(),
+                    });
+            let area = centered_rect(60, 20, f.size());
+            f.render_widget(Clear, area); //this clears out the background
+            f.render_widget(block, area);
+        }
     }
+}
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(popup_layout[1])[1]
 }
